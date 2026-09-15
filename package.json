@@ -397,6 +397,35 @@
           "minimum": 1,
           "markdownDescription": "Maximum time (in seconds) to wait for a Git command before it is aborted. Increase this if the graph times out while loading in a very large repository."
         },
+        "gitGraphPlus.diffEncoding": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "utf8",
+            "cp949",
+            "shiftjis",
+            "eucjp",
+            "gbk",
+            "gb18030",
+            "big5",
+            "windows1252",
+            "iso88591"
+          ],
+          "enumDescriptions": [
+            "Follow `files.encoding` when it is not UTF-8, otherwise the VS Code display language / OS locale (e.g. Korean → EUC-KR/CP949)",
+            "UTF-8 only (no fallback)",
+            "Korean (EUC-KR / CP949)",
+            "Japanese (Shift_JIS)",
+            "Japanese (EUC-JP)",
+            "Simplified Chinese (GBK)",
+            "Simplified Chinese (GB18030)",
+            "Traditional Chinese (Big5)",
+            "Western (Windows 1252)",
+            "Western (ISO 8859-1)"
+          ],
+          "default": "auto",
+          "markdownDescription": "Encoding used to display diff contents of files that are not valid UTF-8 (e.g. legacy EUC-KR/CP949 sources). UTF-8 files are always shown as UTF-8; this only applies to files that would otherwise appear garbled."
+        },
         "gitGraphPlus.initialCommitCount": {
           "type": "integer",
           "default": 200,

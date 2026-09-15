@@ -185,6 +185,7 @@ A modern, full-featured Git GUI for VS Code. Visualize your commit history, mana
 | -------------------------------------- | ------------- | -------------------------------------------------------- |
 | `gitGraphPlus.autoRefresh`             | `true`        | Auto-refresh on repository changes                       |
 | `gitGraphPlus.timeout`                 | `60`          | Max time (seconds) to wait for a Git command before abort |
+| `gitGraphPlus.diffEncoding`            | `auto`        | Encoding for diffs of non-UTF-8 files (e.g. `cp949` for EUC-KR); `auto` follows `files.encoding`, then the display language / OS locale |
 | `gitGraphPlus.initialCommitCount`      | `200`         | Commits loaded on first render / refresh (lower = faster in huge repos) |
 | `gitGraphPlus.loadMoreCommitCount`     | `50`          | Extra commits fetched per **Load more commits** click    |
 | `gitGraphPlus.locale`                  | `auto`        | UI language (`auto`, `en`, `ko`, `zh-cn`)                |

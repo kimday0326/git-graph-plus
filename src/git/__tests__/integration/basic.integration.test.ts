@@ -516,7 +516,7 @@ describe('GitService integration — basic queries', () => {
     it('returns a unified patch for a commit', async () => {
       commit(repo.path, 'init');
       const target = commit(repo.path, 'add file', { 'a.txt': 'a\n' });
-      const patch = await svc.formatPatch(target);
+      const patch = (await svc.formatPatch(target)).toString();
       expect(patch).toContain('From ' + target);
       expect(patch).toContain('Subject: [PATCH] add file');
       expect(patch).toContain('+a');
@@ -528,7 +528,7 @@ describe('GitService integration — basic queries', () => {
         'a.txt': 'a\n',
         'b.txt': 'b\n',
       });
-      const patch = await svc.formatPatch(target, ['a.txt']);
+      const patch = (await svc.formatPatch(target, ['a.txt'])).toString();
       expect(patch).toContain('a/a.txt');
       expect(patch).not.toContain('a/b.txt');
     });

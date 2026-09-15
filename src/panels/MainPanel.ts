@@ -1267,7 +1267,7 @@ export class MainPanel {
             filters: { 'Patch files': ['patch'] },
           });
           if (uri) {
-            await vscode.workspace.fs.writeFile(uri, Buffer.from(patch));
+            await vscode.workspace.fs.writeFile(uri, patch);
           }
           break;
         }

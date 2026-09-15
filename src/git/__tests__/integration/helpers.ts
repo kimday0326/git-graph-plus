@@ -57,7 +57,7 @@ export function createTempRepo(opts: { bare?: boolean } = {}): TempRepo {
   };
 }
 
-export function writeFile(repoPath: string, relPath: string, content: string): void {
+export function writeFile(repoPath: string, relPath: string, content: string | Buffer): void {
   const full = join(repoPath, relPath);
   const dir = full.substring(0, full.lastIndexOf('/'));
   if (dir && dir !== repoPath) mkdirSync(dir, { recursive: true });
@@ -69,7 +69,7 @@ export function writeFile(repoPath: string, relPath: string, content: string): v
  * no files, creates an `--allow-empty` commit so tests can build chains of
  * empty commits cheaply.
  */
-export function commit(repoPath: string, message: string, files?: Record<string, string>): string {
+export function commit(repoPath: string, message: string, files?: Record<string, string | Buffer>): string {
   if (files) {
     for (const [name, content] of Object.entries(files)) writeFile(repoPath, name, content);
     runGit(repoPath, ['add', '-A']);

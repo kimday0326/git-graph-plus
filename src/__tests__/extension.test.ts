@@ -41,6 +41,7 @@ vi.mock('vscode', () => ({
     executeCommand: vi.fn(),
   },
   extensions: { getExtension: () => undefined },
+  env: { language: 'en' },
   l10n: { t: (s: string) => s },
   Uri: { joinPath: () => ({}), file: (p: string) => ({ fsPath: p }), parse: () => ({}) },
   ViewColumn: { One: 1 },

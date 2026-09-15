@@ -14,7 +14,8 @@ import { StatusBarManager } from './views/status-bar';
 import { RepoDiscoveryService } from './services/repo-discovery';
 import { samePath } from './utils/path';
 import { resolveDefaultWorktreePath } from './utils/worktree-path';
-import { readTimeoutMs } from './utils/config';
+import { readDiffFallbackEncoding, readTimeoutMs } from './utils/config';
+import { setDiffFallbackEncoding } from './git/diff-encoding';
 
 /**
  * Resolve the `git.path` setting to an existing executable. The setting may be
@@ -78,6 +79,7 @@ export function activate(context: vscode.ExtensionContext) {
   let apiGitPath: string | undefined;
   const applyGitPath = () => setGitBinaryPath(resolveConfiguredGitPath() ?? apiGitPath);
   applyGitPath();
+  setDiffFallbackEncoding(readDiffFallbackEncoding());
 
   let activeGitService = new GitService(activeRepoPath);
   activeGitService.setDefaultTimeout(readTimeoutMs());
@@ -108,6 +110,9 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('git.path')) applyGitPath();
       if (e.affectsConfiguration('gitGraphPlus.timeout')) activeGitService.setDefaultTimeout(readTimeoutMs());
+      if (e.affectsConfiguration('gitGraphPlus.diffEncoding') || e.affectsConfiguration('files.encoding')) {
+        setDiffFallbackEncoding(readDiffFallbackEncoding());
+      }
     }),
   );
 

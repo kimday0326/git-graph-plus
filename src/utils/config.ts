@@ -1,5 +1,22 @@
 import * as vscode from 'vscode';
 import { normalizeInteractiveRebaseMode, type InteractiveRebaseMode } from '../git/classic-rebase';
+import { resolveDiffFallbackEncoding } from '../git/diff-encoding';
+
+/**
+ * Resolves the encoding for diff file contents that are not valid UTF-8, for
+ * `setDiffFallbackEncoding`. `gitGraphPlus.diffEncoding` wins; `auto` follows
+ * VS Code's `files.encoding`, then the display language / OS locale (e.g.
+ * Korean → EUC-KR/CP949).
+ */
+export function readDiffFallbackEncoding(): string | null {
+  let osLocale: string | undefined;
+  try { osLocale = Intl.DateTimeFormat().resolvedOptions().locale; } catch { /* no Intl */ }
+  return resolveDiffFallbackEncoding(
+    vscode.workspace.getConfiguration('gitGraphPlus').get<string>('diffEncoding', 'auto'),
+    vscode.workspace.getConfiguration('files').get<string>('encoding'),
+    [vscode.env.language, osLocale],
+  );
+}
 
 /**
  * Reads the `gitGraphPlus.timeout` setting (in seconds) and returns the

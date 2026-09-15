@@ -13,8 +13,22 @@ import { resolveGitDirs } from '../services/file-watcher-helpers';
  *  preventing a pathological --no-pager binary blob from eating the whole
  *  extension host. Callers can override per-invocation via `maxBufferBytes`. */
 const DEFAULT_MAX_BUFFER_BYTES = 256 * 1024 * 1024;
+
+/**
+ * `exec` option for diffs shown in the UI: keeps non-UTF-8 file contents
+ * (EUC-KR, Shift_JIS, ...) readable instead of lossily decoding them as UTF-8.
+ */
+const DISPLAY_DIFF = { decode: (buf: Buffer) => decodeDiffOutput(buf) };
+
+/**
+ * `exec` option for diffs fed back to git (e.g. `git apply`) or written to disk:
+ * latin1 maps every byte to one char, so `Buffer.from(text, 'latin1')`
+ * restores the exact original bytes whatever the file's encoding.
+ */
+const BYTE_EXACT = { decode: (buf: Buffer) => buf.toString('latin1') };
 import { parseLog, parseBranches, parseTags, parseRemotes, parseStashList, parseDiff, parseWorktreeList, parseLfsFiles, parseLfsLocks, mapSignatureStatus } from './git-parser';
 import { buildReversePatch } from './patch-builder';
+import { decodeDiffOutput } from './diff-encoding';
 import type { Commit, BranchInfo, TagInfo, RemoteInfo, StashEntry, LogOptions, DiffData, WorktreeInfo, CommitSignature } from './types';
 
 export class GitError extends Error {
@@ -356,7 +370,7 @@ export class GitService {
     }
   }
 
-  private exec(args: string[], options?: { stdin?: string; timeout?: number; silent?: boolean; maxBufferBytes?: number }): Promise<string> {
+  private exec(args: string[], options?: { stdin?: string | Buffer; timeout?: number; silent?: boolean; maxBufferBytes?: number; decode?: (stdout: Buffer) => string }): Promise<string> {
     const startTime = Date.now();
     const command = `git ${args.join(' ')}`;
     const timeoutMs = options?.timeout ?? this.defaultTimeoutMs;
@@ -454,7 +468,7 @@ export class GitService {
         // buffers; if so, don't log or resolve a second time.
         if (settled) return;
         settled = true;
-        const stdout = stdoutBuf.toString();
+        const stdout = options?.decode ? options.decode(stdoutBuf) : stdoutBuf.toString();
         const stderr = stderrBuf.toString();
         recordActivity(code === 0);
         if (code === 0) {
@@ -763,7 +777,7 @@ export class GitService {
       args.push('--', options.file);
     }
 
-    const raw = await this.exec(args);
+    const raw = await this.exec(args, DISPLAY_DIFF);
     return parseDiff(raw, options?.file);
   }
 
@@ -803,17 +817,17 @@ export class GitService {
   async getUncommittedFileDiff(file: string, staged: boolean): Promise<DiffData | null> {
     this.assertSafePath(file, 'diff');
     if (staged) {
-      const raw = await this.exec(['diff', '--no-color', '--cached', '--', file]).catch(() => '');
+      const raw = await this.exec(['diff', '--no-color', '--cached', '--', file], DISPLAY_DIFF).catch(() => '');
       return parseDiff(raw, file)[0] ?? null;
     }
     const isTracked = await this.exec(['ls-files', '--error-unmatch', '--', file]).then(() => true).catch(() => false);
     if (!isTracked) {
       // --no-index exits with code 1 when differences found (normal); stdout has the diff
-      const raw = await this.exec(['diff', '--no-color', '--no-index', '--', '/dev/null', file])
+      const raw = await this.exec(['diff', '--no-color', '--no-index', '--', '/dev/null', file], DISPLAY_DIFF)
         .catch(err => (err instanceof GitError && err.exitCode === 1) ? err.stdout : '');
       return parseDiff(raw, file)[0] ?? null;
     }
-    const raw = await this.exec(['diff', '--no-color', '--', file]).catch(() => '');
+    const raw = await this.exec(['diff', '--no-color', '--', file], DISPLAY_DIFF).catch(() => '');
     return parseDiff(raw, file)[0] ?? null;
   }
 
@@ -1109,7 +1123,7 @@ export class GitService {
   async diffCommits(ref1: string, ref2: string): Promise<DiffData[]> {
     this.assertSafeRef(ref1, 'diff');
     this.assertSafeRef(ref2, 'diff');
-    const raw = await this.exec(['diff', '--no-color', ref1, ref2]);
+    const raw = await this.exec(['diff', '--no-color', ref1, ref2], DISPLAY_DIFF);
     return parseDiff(raw);
   }
 
@@ -1245,10 +1259,10 @@ export class GitService {
     const parents = await this.commitParents(hash);
     if (parents.length === 0) {
       // Root commit: diff against empty tree.
-      return parseDiff(await this.exec(['show', '--no-color', '--format=', hash]));
+      return parseDiff(await this.exec(['show', '--no-color', '--format=', hash], DISPLAY_DIFF));
     }
     // Single-parent commit, or merge overview (first-parent diff).
-    return parseDiff(await this.exec(['diff', '--no-color', `${hash}^..${hash}`]));
+    return parseDiff(await this.exec(['diff', '--no-color', `${hash}^..${hash}`], DISPLAY_DIFF));
   }
 
   /**
@@ -1257,15 +1271,22 @@ export class GitService {
    * selection here guarantees the displayed diff ({@link showCommitDiff}) and the
    * patch we reverse ({@link reverseCommitChanges}) can never pick different
    * parents — see the merge-commit case below.
+   *
+   * `decoding` is {@link DISPLAY_DIFF} for rendering, or {@link BYTE_EXACT} when
+   * the raw text is turned back into a patch for git.
    */
-  private async commitFileDiff(hash: string, file: string): Promise<{ raw: string; parsed: DiffData[] }> {
+  private async commitFileDiff(
+    hash: string,
+    file: string,
+    decoding: typeof DISPLAY_DIFF = DISPLAY_DIFF,
+  ): Promise<{ raw: string; parsed: DiffData[] }> {
     this.assertSafeRef(hash, 'diff');
     this.assertSafePath(file, 'diff');
     const parents = await this.commitParents(hash);
 
     if (parents.length === 0) {
       // Root commit: diff against the empty tree.
-      const raw = await this.exec(['show', '--no-color', '--format=', hash, '--', file]);
+      const raw = await this.exec(['show', '--no-color', '--format=', hash, '--', file], decoding);
       return { raw, parsed: parseDiff(raw) };
     }
 
@@ -1277,7 +1298,7 @@ export class GitService {
       // doesn't shadow the later parent that actually holds the content.
       for (const parent of parents) {
         this.assertSafeRef(parent, 'diff');
-        const raw = await this.exec(['diff', '--no-color', `${parent}..${hash}`, '--', file]);
+        const raw = await this.exec(['diff', '--no-color', `${parent}..${hash}`, '--', file], decoding);
         const parsed = parseDiff(raw);
         if (parsed.length > 0 && parsed[0].hunks.length > 0) {
           return { raw, parsed };
@@ -1286,7 +1307,7 @@ export class GitService {
       return { raw: '', parsed: [] };
     }
 
-    const raw = await this.exec(['diff', '--no-color', `${hash}^..${hash}`, '--', file]);
+    const raw = await this.exec(['diff', '--no-color', `${hash}^..${hash}`, '--', file], decoding);
     return { raw, parsed: parseDiff(raw) };
   }
 
@@ -1308,7 +1329,8 @@ export class GitService {
     this.assertSafeRef(hash, 'apply');
     this.assertSafePath(file, 'apply');
 
-    const { raw } = await this.commitFileDiff(hash, file);
+    // Byte-exact so the patch still applies to non-UTF-8 (e.g. EUC-KR) files.
+    const { raw } = await this.commitFileDiff(hash, file, BYTE_EXACT);
     if (!raw.trim()) {
       throw new GitError(`No changes to reverse for ${file} in ${hash.substring(0, 7)}`, null, []);
     }
@@ -1319,7 +1341,7 @@ export class GitService {
 
     // --recount lets git fix up the line counts of our reconstructed hunks;
     // applying without --cached touches only the working tree.
-    await this.exec(['apply', '--reverse', '--recount'], { stdin: patch });
+    await this.exec(['apply', '--reverse', '--recount'], { stdin: Buffer.from(patch, 'latin1') });
   }
 
   /**
@@ -1331,7 +1353,7 @@ export class GitService {
     this.assertSafeRef(parents[0], 'diff');
     const trackedArgs = ['diff', '--no-color', `${parents[0]}..${hash}`];
     if (file) trackedArgs.push('--', file);
-    const tracked = parseDiff(await this.exec(trackedArgs));
+    const tracked = parseDiff(await this.exec(trackedArgs, DISPLAY_DIFF));
 
     // A requested file that lives in the tracked diff needs no untracked lookup.
     if (file && tracked.length > 0) return tracked;
@@ -1341,7 +1363,7 @@ export class GitService {
       this.assertSafeRef(parents[2], 'diff');
       const untrackedArgs = ['show', '--no-color', '--format=', parents[2]];
       if (file) untrackedArgs.push('--', file);
-      untracked = parseDiff(await this.exec(untrackedArgs));
+      untracked = parseDiff(await this.exec(untrackedArgs, DISPLAY_DIFF));
     }
 
     if (file) return untracked;
@@ -2165,7 +2187,8 @@ export class GitService {
 
   // --- Patch ---
 
-  async formatPatch(hash: string, paths?: string[]): Promise<string> {
+  /** The commit as a mailbox-style patch, byte-exact so non-UTF-8 files survive. */
+  async formatPatch(hash: string, paths?: string[]): Promise<Buffer> {
     this.assertSafeRef(hash, 'format-patch');
     const args = ['format-patch', '-1', hash, '--stdout'];
     if (paths && paths.length > 0) {
@@ -2174,12 +2197,12 @@ export class GitService {
       }
       args.push('--', ...paths);
     }
-    return this.exec(args);
+    return Buffer.from(await this.exec(args, BYTE_EXACT), 'latin1');
   }
 
   async diffCommitToWorking(hash: string): Promise<DiffData[]> {
     this.assertSafeRef(hash, 'diff');
-    const raw = await this.exec(['diff', hash]);
+    const raw = await this.exec(['diff', hash], DISPLAY_DIFF);
     return parseDiff(raw);
   }
 
