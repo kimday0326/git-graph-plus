@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { GitService } from '../../git-service';
-import { setDiffFallbackEncoding } from '../../diff-encoding';
+import { setDiffFallbackEncodings } from '../../diff-encoding';
 import { TempRepo, commit, createTempRepo } from './helpers';
 
 // "안녕\n" and "한글\n" encoded as EUC-KR/CP949.
@@ -17,12 +17,12 @@ describe('GitService integration — non-UTF-8 diffs', () => {
   beforeEach(() => {
     repo = createTempRepo();
     svc = new GitService(repo.path);
-    setDiffFallbackEncoding('cp949');
+    setDiffFallbackEncodings(['cp949']);
     commit(repo.path, 'base', { 'legacy.txt': ANNYEONG_EUCKR, 'modern.txt': '안녕\n' });
     hash = commit(repo.path, 'change', { 'legacy.txt': HANGUL_EUCKR, 'modern.txt': '한글\n' });
   });
   afterEach(() => {
-    setDiffFallbackEncoding(null);
+    setDiffFallbackEncodings([]);
     repo.cleanup();
   });
 

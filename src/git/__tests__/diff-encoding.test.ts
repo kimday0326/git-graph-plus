@@ -1,15 +1,20 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
   decodeDiffOutput,
-  getDiffFallbackEncoding,
+  getDiffFallbackEncodings,
   legacyEncodingForLocale,
   normalizeEncoding,
-  resolveDiffFallbackEncoding,
-  setDiffFallbackEncoding,
+  resolveDiffFallbackEncodings,
+  setDiffFallbackEncodings,
 } from '../diff-encoding';
 
 // "한글" in EUC-KR/CP949 — not valid UTF-8.
 const HANGUL_EUCKR = Buffer.from([0xc7, 0xd1, 0xb1, 0xdb]);
+// "test 한국어어어어어" in EUC-KR/CP949.
+const SENTENCE_EUCKR = Buffer.concat([
+  Buffer.from('test '),
+  Buffer.from([0xc7, 0xd1, 0xb1, 0xb9, 0xbe, 0xee, 0xbe, 0xee, 0xbe, 0xee, 0xbe, 0xee, 0xbe, 0xee]),
+]);
 
 function diffFor(path: string, removed: Buffer | string, added: Buffer | string): Buffer {
   const bytes = (v: Buffer | string) => (typeof v === 'string' ? Buffer.from(v) : v);
@@ -54,64 +59,72 @@ describe('legacyEncodingForLocale', () => {
   });
 });
 
-describe('resolveDiffFallbackEncoding', () => {
-  it('uses an explicit setting over everything else', () => {
-    expect(resolveDiffFallbackEncoding('cp949', 'shiftjis', ['ja'])).toBe('euc-kr');
+describe('resolveDiffFallbackEncodings', () => {
+  it('uses only an explicit setting', () => {
+    expect(resolveDiffFallbackEncodings('cp949', 'shiftjis', ['ja'])).toEqual(['euc-kr']);
   });
 
   it('disables the fallback for an explicit utf8 setting', () => {
-    expect(resolveDiffFallbackEncoding('utf8', 'cp949', ['ko'])).toBeNull();
+    expect(resolveDiffFallbackEncodings('utf8', 'cp949', ['ko'])).toEqual([]);
   });
 
-  it('auto follows a non-UTF-8 files.encoding', () => {
-    expect(resolveDiffFallbackEncoding('auto', 'euckr', ['en'])).toBe('euc-kr');
+  it('auto puts files.encoding and locale hints first', () => {
+    expect(resolveDiffFallbackEncodings('auto', 'shiftjis', ['en', 'zh-tw']))
+      .toEqual(['shift_jis', 'big5', 'euc-kr', 'gbk', 'windows-1252']);
   });
 
-  it('auto falls back to the first CJK locale, then windows-1252', () => {
-    expect(resolveDiffFallbackEncoding('auto', 'utf8', ['en', 'ko-KR'])).toBe('euc-kr');
-    expect(resolveDiffFallbackEncoding('auto', 'utf8', ['en', 'en-US'])).toBe('windows-1252');
+  it('auto without hints still tries CJK encodings before windows-1252', () => {
+    expect(resolveDiffFallbackEncodings('auto', 'utf8', ['en', 'en-US']))
+      .toEqual(['euc-kr', 'shift_jis', 'gbk', 'big5', 'windows-1252']);
   });
 });
 
 describe('decodeDiffOutput', () => {
-  afterEach(() => setDiffFallbackEncoding(null));
+  afterEach(() => setDiffFallbackEncodings([]));
 
-  it('decodes valid UTF-8 output as UTF-8 even with a fallback set', () => {
+  it('decodes valid UTF-8 output as UTF-8 even with fallbacks set', () => {
     const buf = diffFor('a.txt', '한글', '글자');
-    expect(decodeDiffOutput(buf, 'euc-kr')).toBe(buf.toString('utf8'));
+    expect(decodeDiffOutput(buf, ['euc-kr'])).toBe(buf.toString('utf8'));
   });
 
   it('decodes EUC-KR file contents with the fallback encoding', () => {
-    const text = decodeDiffOutput(diffFor('a.txt', HANGUL_EUCKR, 'ascii'), 'euc-kr');
+    const text = decodeDiffOutput(diffFor('a.txt', HANGUL_EUCKR, 'ascii'), ['euc-kr']);
     expect(text).toContain('\n-한글\n+ascii\n');
   });
 
+  it('auto with no locale hint decodes EUC-KR instead of windows-1252 mojibake', () => {
+    const encodings = resolveDiffFallbackEncodings('auto', 'utf8', ['en-US']);
+    const text = decodeDiffOutput(diffFor('a.txt', SENTENCE_EUCKR, 'x'), encodings);
+    expect(text).toContain('-test 한국어어어어어\n');
+  });
+
+  it('skips a candidate that fails and uses the next one that fits', () => {
+    // 0xFF is not a valid EUC-KR byte, so windows-1252 is used.
+    const text = decodeDiffOutput(diffFor('a.txt', Buffer.from([0xff]), 'x'), ['euc-kr', 'windows-1252']);
+    expect(text).toContain('-ÿ\n');
+  });
+
   it('keeps UTF-8 paths in the header of a non-UTF-8 section', () => {
-    const text = decodeDiffOutput(diffFor('문서.txt', HANGUL_EUCKR, 'x'), 'euc-kr');
+    const text = decodeDiffOutput(diffFor('문서.txt', HANGUL_EUCKR, 'x'), ['euc-kr']);
     expect(text).toContain('+++ b/문서.txt\n');
     expect(text).toContain('-한글\n');
   });
 
   it('chooses the encoding per file section', () => {
     const buf = Buffer.concat([diffFor('utf.txt', '가나', 'x'), diffFor('legacy.txt', HANGUL_EUCKR, 'y')]);
-    const text = decodeDiffOutput(buf, 'euc-kr');
+    const text = decodeDiffOutput(buf, ['euc-kr']);
     expect(text).toContain('-가나\n');
     expect(text).toContain('-한글\n');
   });
 
-  it('without a fallback, decodes lossily as UTF-8', () => {
-    const text = decodeDiffOutput(diffFor('a.txt', HANGUL_EUCKR, 'x'), null);
+  it('without fallbacks, decodes lossily as UTF-8', () => {
+    const text = decodeDiffOutput(diffFor('a.txt', HANGUL_EUCKR, 'x'), []);
     expect(text).toContain('�');
   });
 
-  it('uses the configured fallback by default', () => {
-    setDiffFallbackEncoding('cp949');
-    expect(getDiffFallbackEncoding()).toBe('euc-kr');
+  it('uses the configured fallbacks by default', () => {
+    setDiffFallbackEncodings(['cp949', 'utf8']);
+    expect(getDiffFallbackEncodings()).toEqual(['euc-kr']);
     expect(decodeDiffOutput(diffFor('a.txt', HANGUL_EUCKR, 'x'))).toContain('-한글\n');
-  });
-
-  it('treats utf8 as no fallback', () => {
-    setDiffFallbackEncoding('utf8');
-    expect(getDiffFallbackEncoding()).toBeNull();
   });
 });

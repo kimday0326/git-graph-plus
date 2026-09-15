@@ -412,7 +412,7 @@
             "iso88591"
           ],
           "enumDescriptions": [
-            "Follow `files.encoding` when it is not UTF-8, otherwise the VS Code display language / OS locale (e.g. Korean → EUC-KR/CP949)",
+            "Detect automatically: tries `files.encoding`, the display language / OS locale, then EUC-KR/CP949, Shift_JIS, GBK, Big5",
             "UTF-8 only (no fallback)",
             "Korean (EUC-KR / CP949)",
             "Japanese (Shift_JIS)",
